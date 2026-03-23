@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Flash - Global Shared Session</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <style>
+        :root {
+            --bg: #020617;
+            --glass: rgba(15, 23, 42, 0.8);
+            --border: rgba(255, 255, 255, 0.1);
+            --accent: #38bdf8;
+            --danger: #f43f5e;
+            --text: #f8fafc;
+            --text-sub: #94a3b8;
+            --ai-bubble: rgba(30, 41, 59, 0.7);
+            --user-bubble: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg);
+            background-image: radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.05) 0px, transparent 50%);
+            color: var(--text);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        header {
+            padding: 15px 25px;
+            background: var(--glass);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .status-card {
+            background: rgba(0,0,0,0.3);
+            padding: 8px 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            text-align: right;
+        }
+
+        .rpm-val { font-size: 22px; font-weight: 900; color: var(--accent); line-height: 1; transition: color 0.3s; }
+        .rpm-label { font-size: 9px; color: var(--text-sub); letter-spacing: 1px; margin-top: 4px; text-transform: uppercase; }
+
+        /* Chat Container */
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .system-banner {
+            align-self: center;
+            font-size: 11px;
+            background: rgba(255,255,255,0.05);
+            padding: 10px 20px;
+            border-radius: 15px;
+            color: var(--text-sub);
+            border: 1px solid var(--border);
+            text-align: center;
+            line-height: 1.6;
+            margin: 10px 0;
+            max-width: 90%;
+            white-space: pre-wrap;
+        }
+
+        .msg-wrapper {
+            display: flex;
+            flex-direction: column;
+            max-width: 85%;
+            animation: msgIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes msgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .ai-msg { align-self: flex-start; }
+        .user-msg { align-self: flex-end; }
+
+        .bubble {
+            padding: 14px 18px;
+            border-radius: 20px;
+            font-size: 15px;
+            line-height: 1.6;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .ai-msg .bubble { background: var(--ai-bubble); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+        .user-msg .bubble { background: var(--user-bubble); color: white; border-bottom-right-radius: 4px; box-shadow: 0 4px 15px rgba(2, 132, 199, 0.2); }
+
+        .model-tag { font-size: 10px; font-weight: 800; color: var(--accent); margin-bottom: 6px; letter-spacing: 1px; }
+
+        /* Typing Animation (AI Pulse) */
+        .typing { display: flex; gap: 6px; padding: 10px 5px; }
+        .dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 1.4s infinite ease-in-out; opacity: 0.6; }
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse { 0%, 100% { transform: scale(0.7); opacity: 0.2; } 50% { transform: scale(1.2); opacity: 1; } }
+
+        /* Footer / Input */
+        .footer {
+            padding: 20px 25px 35px;
+            background: linear-gradient(transparent, var(--bg) 50%);
+        }
+
+        .input-box {
+            max-width: 850px;
+            margin: 0 auto;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 10px 18px;
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            transition: border-color 0.3s;
+        }
+
+        .input-box:focus-within { border-color: var(--accent); }
+
+        textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            padding: 10px 0;
+            outline: none;
+            resize: none;
+            max-height: 180px;
+            font-size: 16px;
+            font-family: inherit;
+        }
+
+        button {
+            background: var(--accent);
+            border: none;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+            flex-shrink: 0;
+            margin-bottom: 3px;
+        }
+
+        button:hover { transform: scale(1.05); }
+        button:disabled { background: #334155; opacity: 0.5; cursor: not-allowed; transform: scale(1); }
+
+        .lock-notice {
+            color: var(--danger);
+            font-size: 12px;
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+            display: none;
+            animation: shake 0.5s ease;
+        }
+
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+    </style>
+</head>
+<body>
+
+<header>
+    <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:12px; height:12px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent);"></div>
+        <div style="font-weight: 800; font-size: 1.2rem; letter-spacing: -0.5px;">GEMINI FLASH <span style="font-size:10px; opacity:0.5; font-weight:400;">GLOBAL</span></div>
+    </div>
+    <div class="status-card">
+        <div id="rpm-display" class="rpm-val">0</div>
+        <div class="rpm-label">Global RPM / 15</div>
+    </div>
+</header>
+
+<div id="chat-container">
+    <!-- 起動時にシステムバナーが挿入されます -->
+</div>
+
+<div class="footer">
+    <div id="lock-notice" class="lock-notice">⚠️ 制限により送信できません</div>
+    <div class="input-box">
+        <textarea id="user-input" placeholder="メッセージを入力..." rows="1"></textarea>
+        <button id="send-btn">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>
+        </button>
+    </div>
+</div>
+
+<script>
+    // --- 1. Firebase 設定 ---
+    const firebaseConfig = {
+        databaseURL: "https://gemini-ai-api-seigen-default-rtdb.firebaseio.com/",
+        projectId: "gemini-ai-api-seigen"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const logsRef = db.ref('global_limit/logs');
+    const statusRef = db.ref('global_limit/status');
+
+    // Gemini 設定
+    const API_KEY = "AIzaSyBGE0I5PHI7voDU-KqKizMoPX3LSSnPcM0";
+    const MODEL_ID = "gemini-flash-latest";
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`;
+
+    const chatContainer = document.getElementById('chat-container');
+    const rpmDisplay = document.getElementById('rpm-display');
+    const sendBtn = document.getElementById('send-btn');
+    const lockNotice = document.getElementById('lock-notice');
+    const userInput = document.getElementById('user-input');
+
+    let allTimestamps = [];
+    let isGlobalLocked = false;
+
+    // --- 2. 起動時処理 (システム情報の表示) ---
+    window.onload = () => {
+        const now = new Date();
+        const info = `【SESSION SYSTEM START】\nDate: ${now.toLocaleDateString()} | Time: ${now.toLocaleTimeString()}\nModel: ${MODEL_ID.toUpperCase()}\nStatus: Online (Global RPM Sync Enabled)`;
+        
+        const banner = document.createElement('div');
+        banner.className = 'system-banner';
+        banner.innerText = info;
+        chatContainer.appendChild(banner);
+    };
+
+    // --- 3. リアルタイム同期 (Firebase) ---
+    // ログ（送信履歴）の監視
+    logsRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        allTimestamps = data ? Object.values(data) : [];
+        refreshLimitUI();
+    });
+
+    // 管理者によるロックステータスの監視
+    statusRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        isGlobalLocked = data ? data.isLocked : false;
+        refreshLimitUI();
+    });
+
+    // 制限状態の計算とUI更新
+    function refreshLimitUI() {
+        const now = Date.now();
+        const activeLogs = allTimestamps.filter(ts => now - ts < 60000);
+        const count = activeLogs.length;
+        
+        rpmDisplay.innerText = count;
+
+        if (isGlobalLocked || count >= 15) {
+            sendBtn.disabled = true;
+            lockNotice.style.display = 'block';
+            rpmDisplay.style.color = 'var(--danger)';
+            
+            if (isGlobalLocked) {
+                lockNotice.innerText = "⚠️ 管理者により一時的に利用が停止されています";
+            } else {
+                lockNotice.innerText = "⚠️ 全体制限に達しました (15/15)。1分経つまでお待ちください";
+            }
+        } else {
+            sendBtn.disabled = false;
+            lockNotice.style.display = 'none';
+            rpmDisplay.style.color = 'var(--accent)';
+        }
+    }
+
+    // メッセージ追加関数
+    function addMessage(text, isUser, isLoading = false) {
+        const wrapper = document.createElement('div');
+        wrapper.className = `msg-wrapper ${isUser ? 'user-msg' : 'ai-msg'}`;
+        
+        if (isLoading) {
+            wrapper.innerHTML = `
+                <div class="model-tag">${MODEL_ID.toUpperCase()}</div>
+                <div class="bubble"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>`;
+        } else {
+            const tag = isUser ? '' : `<div class="model-tag">${MODEL_ID.toUpperCase()}</div>`;
+            wrapper.innerHTML = `${tag}<div class="bubble">${text}</div>`;
+        }
+
+        chatContainer.appendChild(wrapper);
+        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+        return wrapper;
+    }
+
+    // 送信処理
+    async function handleSend() {
+        const text = userInput.value.trim();
+        if (!text || sendBtn.disabled) return;
+
+        // Firebaseに記録 (全員の画面を即座に更新)
+        logsRef.push(Date.now());
+
+        addMessage(text, true);
+        userInput.value = '';
+        userInput.style.height = 'auto';
+
+        const loadingMsg = addMessage("", false, true);
+
+        try {
+            const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents: [{ parts: [{ text: text }] }] })
+            });
+            const data = await response.json();
+            loadingMsg.remove();
+
+            if (data.error) throw new Error(data.error.message);
+            
+            const aiText = data.candidates[0].content.parts[0].text;
+            addMessage(aiText, false);
+        } catch (e) {
+            loadingMsg.remove();
+            addMessage("エラーが発生しました: " + e.message, false);
+        }
+    }
+
+    // イベント
+    sendBtn.onclick = handleSend;
+    userInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+    userInput.oninput = function() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; };
+
+    // カウントダウン表示を毎秒更新
+    setInterval(refreshLimitUI, 1000);
+</script>
+
+</body>
+</html>
