@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Flash - Shared Session</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <style>
+        :root {
+            --bg: #020617; --glass: rgba(15, 23, 42, 0.8); --border: rgba(255, 255, 255, 0.1);
+            --accent: #38bdf8; --danger: #f43f5e; --text: #f8fafc; --text-sub: #94a3b8;
+            --ai-bubble: rgba(30, 41, 59, 0.7); --user-bubble: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif; background-color: var(--bg); color: var(--text);
+            margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+            background-image: radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.05) 0px, transparent 50%);
+        }
+        header {
+            padding: 15px 25px; background: var(--glass); backdrop-filter: blur(15px);
+            border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; z-index: 100;
+        }
+        .status-card { background: rgba(0,0,0,0.3); padding: 8px 15px; border-radius: 12px; border: 1px solid rgba(59, 130, 246, 0.2); text-align: right; }
+        .rpm-val { font-size: 22px; font-weight: 900; color: var(--accent); line-height: 1; }
+        .rpm-label { font-size: 9px; color: var(--text-sub); letter-spacing: 1px; margin-top: 4px; text-transform: uppercase; }
+        #chat-container { flex: 1; overflow-y: auto; padding: 25px; display: flex; flex-direction: column; gap: 20px; }
+        .system-banner { align-self: center; font-size: 11px; background: rgba(255,255,255,0.05); padding: 10px 20px; border-radius: 15px; color: var(--text-sub); border: 1px solid var(--border); text-align: center; line-height: 1.6; }
+        .msg-wrapper { display: flex; flex-direction: column; max-width: 85%; animation: msgIn 0.4s ease; }
+        @keyframes msgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
+        .ai-msg { align-self: flex-start; } .user-msg { align-self: flex-end; }
+        .bubble { padding: 14px 18px; border-radius: 20px; font-size: 15px; line-height: 1.6; word-wrap: break-word; white-space: pre-wrap; position: relative; }
+        .ai-msg .bubble { background: var(--ai-bubble); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+        .user-msg .bubble { background: var(--user-bubble); color: white; border-bottom-right-radius: 4px; }
+        .model-tag { font-size: 10px; font-weight: 800; color: var(--accent); margin-bottom: 6px; letter-spacing: 1px; }
+        .typing { display: flex; gap: 6px; padding: 10px 5px; }
+        .dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 1.4s infinite ease-in-out; opacity: 0.6; }
+        .dot:nth-child(2) { animation-delay: 0.2s; } .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse { 0%, 100% { transform: scale(0.7); opacity: 0.2; } 50% { transform: scale(1.2); opacity: 1; } }
+        .footer { padding: 20px 25px 35px; background: linear-gradient(transparent, var(--bg) 50%); }
+        .input-box { max-width: 850px; margin: 0 auto; background: var(--glass); border: 1px solid var(--border); border-radius: 24px; padding: 10px 18px; display: flex; align-items: flex-end; gap: 12px; }
+        textarea { flex: 1; background: transparent; border: none; color: white; padding: 10px 0; outline: none; resize: none; max-height: 180px; font-size: 16px; font-family: inherit; }
+        button { background: var(--accent); border: none; width: 42px; height: 42px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; flex-shrink: 0; }
+        button:disabled { background: #334155; opacity: 0.5; cursor: not-allowed; }
+        .lock-notice { color: var(--danger); font-size: 12px; text-align: center; margin-bottom: 10px; font-weight: bold; display: none; }
+    </style>
+</head>
+<body>
+<header>
+    <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:12px; height:12px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent);"></div>
+        <div style="font-weight: 800; font-size: 1.2rem; letter-spacing: -0.5px;">GEMINI FLASH <span style="font-size:10px; opacity:0.5; font-weight:400;">GLOBAL</span></div>
+    </div>
+    <div class="status-card">
+        <div id="rpm-display" class="rpm-val">0</div>
+        <div class="rpm-label">Global RPM / 15</div>
+    </div>
+</header>
+<div id="chat-container"></div>
+<div class="footer">
+    <div id="lock-notice" class="lock-notice">⚠️ 送信制限中</div>
+    <div class="input-box">
+        <textarea id="user-input" placeholder="メッセージを入力..." rows="1"></textarea>
+        <button id="send-btn"><svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg></button>
+    </div>
+</div>
+<script>
+    const firebaseConfig = { databaseURL: "https://gemini-ai-api-seigen-default-rtdb.firebaseio.com/", projectId: "gemini-ai-api-seigen" };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const logsRef = db.ref('global_limit/logs');
+    const statusRef = db.ref('global_limit/status');
+
+    const API_KEY = "AIzaSyBGE0I5PHI7voDU-KqKizMoPX3LSSnPcM0";
+    const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+
+    const chatContainer = document.getElementById('chat-container');
+    const rpmDisplay = document.getElementById('rpm-display');
+    const sendBtn = document.getElementById('send-btn');
+    const lockNotice = document.getElementById('lock-notice');
+    const userInput = document.getElementById('user-input');
+
+    let allLogEntries = [];
+    let isGlobalLocked = false;
+
+    window.onload = () => {
+        const now = new Date();
+        const info = `【SESSION START】\nDate: ${now.toLocaleDateString()} ${now.toLocaleTimeString()}\nModel: GEMINI-1.5-FLASH\nStatus: Global RPM Sync Active`;
+        const banner = document.createElement('div');
+        banner.className = 'system-banner';
+        banner.innerText = info;
+        chatContainer.appendChild(banner);
+    };
+
+    logsRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        allLogEntries = data ? Object.values(data) : [];
+        refreshUI();
+    });
+
+    statusRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        isGlobalLocked = data ? data.isLocked : false;
+        refreshUI();
+    });
+
+    function refreshUI() {
+        const now = Date.now();
+        const activeCount = allLogEntries.filter(e => e.role === 'user' && now - e.timestamp < 60000).length;
+        rpmDisplay.innerText = activeCount;
+        if (isGlobalLocked || activeCount >= 15) {
+            sendBtn.disabled = true;
+            lockNotice.style.display = 'block';
+            lockNotice.innerText = isGlobalLocked ? "⚠️ 管理者により一時停止中" : "⚠️ 全体制限に達しました (15/15)";
+        } else {
+            sendBtn.disabled = false;
+            lockNotice.style.display = 'none';
+        }
+    }
+
+    function addMessage(text, isUser, isLoading = false) {
+        const wrapper = document.createElement('div');
+        wrapper.className = `msg-wrapper ${isUser ? 'user-msg' : 'ai-msg'}`;
+        if (isLoading) {
+            wrapper.innerHTML = `<div class="bubble"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>`;
+        } else {
+            const tag = isUser ? '' : `<div class="model-tag">GEMINI-FLASH</div>`;
+            wrapper.innerHTML = `${tag}<div class="bubble">${text}</div>`;
+        }
+        chatContainer.appendChild(wrapper);
+        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+        return wrapper;
+    }
+
+    async function handleSend() {
+        const text = userInput.value.trim();
+        if (!text || sendBtn.disabled) return;
+        logsRef.push({ timestamp: Date.now(), text: text, role: 'user' });
+        addMessage(text, true);
+        userInput.value = ''; userInput.style.height = 'auto';
+        const loading = addMessage("", false, true);
+        try {
+            const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents: [{ parts: [{ text: text }] }] })
+            });
+            const data = await response.json();
+            loading.remove();
+            const aiText = data.candidates[0].content.parts[0].text;
+            logsRef.push({ timestamp: Date.now(), text: aiText, role: 'ai' });
+            addMessage(aiText, false);
+        } catch (e) {
+            loading.remove(); addMessage("Error: " + e.message, false);
+        }
+    }
+
+    sendBtn.onclick = handleSend;
+    userInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+    userInput.oninput = function() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; };
+    setInterval(refreshUI, 1000);
+</script>
+</body>
+</html>
