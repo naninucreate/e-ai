@@ -3,12 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini Global Chat</title>
-    <!-- Firebaseのライブラリ（これがないと動きません） -->
+    <title>Gemini Global Chat (Dual IP Log)</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
-        /* 見た目の設定 */
         :root {
             --bg: #020617; --glass: rgba(15, 23, 42, 0.8); --border: rgba(255, 255, 255, 0.1);
             --accent: #38bdf8; --danger: #f43f5e; --text: #f8fafc; --text-sub: #94a3b8;
@@ -71,36 +69,21 @@
 </div>
 
 <script>
-    /* ==========================================================
-       【設定項目：ここを書き換えてください】
-       ========================================================== */
-
-    // 1. Gemini APIキー (漏洩すると無効化されるので注意！)
+    // --- 設定 ---
     const GEMINI_API_KEY = "AIzaSyBoNRyMdqSGStpPbGjxfHXzTSXh4csFfmo";
-
-    // 2. Firebaseの設定 (Realtime DatabaseのURL)
     const firebaseConfig = { 
         databaseURL: "https://gemini-ai-api-seigen-default-rtdb.firebaseio.com/", 
         projectId: "gemini-ai-api-seigen" 
     };
-
-    // 3. モデルの名前
     const MODEL_NAME = "gemini-flash-latest";
 
-    /* ==========================================================
-       【以下、プログラム本体：基本はいじらなくてOK】
-       ========================================================== */
-
-    // Firebaseの初期化
+    // --- 初期化 ---
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
     const logsRef = db.ref('global_limit/logs');
     const statusRef = db.ref('global_limit/status');
-
-    // GeminiのURL設定
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
 
-    // HTML要素の取得
     const chatContainer = document.getElementById('chat-container');
     const rpmDisplay = document.getElementById('rpm-display');
     const sendBtn = document.getElementById('send-btn');
@@ -109,20 +92,33 @@
 
     let allLogEntries = [];
     let isGlobalLocked = false;
+    
+    // IPアドレス保存用
+    let ipV4 = "none";
+    let ipV6 = "none";
 
-    // 起動時の初期メッセージ (日付/時間/モデル詳細)
-    window.onload = () => {
+    // 起動時に「短いIP」と「長いIP」の両方を取得
+    window.onload = async () => {
+        // 並列で取得
+        Promise.all([
+            fetch('https://api4.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"})),
+            fetch('https://api6.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"}))
+        ]).then(results => {
+            ipV4 = results[0].ip;
+            ipV6 = results[1].ip;
+        });
+
         const now = new Date();
         const banner = document.createElement('div');
         banner.className = 'msg-wrapper';
         banner.style.alignSelf = 'center';
         banner.innerHTML = `<div style="font-size:11px; color:var(--text-sub); background:rgba(255,255,255,0.05); padding:10px 20px; border-radius:15px; border:1px solid var(--border); text-align:center;">
             【SYSTEM ON】 ${now.toLocaleDateString()} ${now.toLocaleTimeString()}<br>
-            Model: ${MODEL_NAME.toUpperCase()} | RPM Sync: Active</div>`;
+            Model: ${MODEL_NAME.toUpperCase()} | Secure Logging: Active</div>`;
         chatContainer.appendChild(banner);
     };
 
-    // Firebaseから履歴とステータスをリアルタイム取得
+    // Firebase連携・制限監視
     logsRef.on('value', (snap) => {
         const data = snap.val();
         allLogEntries = data ? Object.values(data) : [];
@@ -135,25 +131,17 @@
         updateUI();
     });
 
-    // 制限の計算と画面の更新
     function updateUI() {
         const now = Date.now();
-        // 直近60秒間に「user」が送った数だけを数える
         const count = allLogEntries.filter(e => e.role === 'user' && now - e.timestamp < 60000).length;
         rpmDisplay.innerText = count;
-
         const isLimited = count >= 15 || isGlobalLocked;
         sendBtn.disabled = isLimited;
         lockNotice.style.display = isLimited ? 'block' : 'none';
-
-        if (isGlobalLocked) {
-            lockNotice.innerText = "⚠️ 管理者により一時停止中 (メンテナンス中など)";
-        } else if (count >= 15) {
-            lockNotice.innerText = "⚠️ 全体制限に達しました (15/15) 。1分経つまで待機してください";
-        }
+        if (isGlobalLocked) lockNotice.innerText = "⚠️ 管理者により一時停止中";
+        else if (count >= 15) lockNotice.innerText = "⚠️ 全体制限に達しました (15/15)";
     }
 
-    // メッセージを画面に追加する関数
     function addMsg(text, isUser, isLoading = false) {
         const wrapper = document.createElement('div');
         wrapper.className = `msg-wrapper ${isUser ? 'user-msg' : 'ai-msg'}`;
@@ -168,22 +156,26 @@
         return wrapper;
     }
 
-    // 送信ボタンが押された時の処理
+    // 送信処理
     async function handleSend() {
         const text = userInput.value.trim();
         if (!text || sendBtn.disabled) return;
 
-        // 1. Firebaseに「ユーザーの送信」を記録
-        logsRef.push({ timestamp: Date.now(), text: text, role: 'user' });
+        // 【管理画面用】IP情報を付与： メッセージ ip:1.1.1.1 ipv6:82dr...
+        const logText = `${text} ip:${ipV4} ipv6:${ipV6}`;
+        
+        // Firebaseにログを送信
+        logsRef.push({ timestamp: Date.now(), text: logText, role: 'user' });
 
+        // チャット画面には元のメッセージだけ表示
         addMsg(text, true);
         userInput.value = '';
         userInput.style.height = 'auto';
 
         const loading = addMsg("", false, true);
 
-        // 2. Gemini API 呼び出し
         try {
+            // APIには元のメッセージだけ送信
             const response = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -192,13 +184,9 @@
             const data = await response.json();
             loading.remove();
 
-            // エラーチェック
             if (data.error) throw new Error(data.error.message);
-            if (!data.candidates || data.candidates.length === 0) throw new Error("安全フィルターにより回答できません");
-
             const aiText = data.candidates[0].content.parts[0].text;
             
-            // 3. Firebaseに「AIの回答」を記録
             logsRef.push({ timestamp: Date.now(), text: aiText, role: 'ai' });
             addMsg(aiText, false);
 
@@ -208,12 +196,9 @@
         }
     }
 
-    // イベント設定
     sendBtn.onclick = handleSend;
     userInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
     userInput.oninput = function() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; };
-    
-    // 1秒ごとに制限表示をリフレッシュ
     setInterval(updateUI, 1000);
 </script>
 </body>
