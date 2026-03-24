@@ -50,7 +50,7 @@
 <header>
     <div style="display:flex; align-items:center; gap:12px;">
         <div style="width:12px; height:12px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent);"></div>
-        <div style="font-weight: 800; font-size: 1.2rem; letter-spacing: -0.5px;">GEMINI FLASH <span style="font-size:10px; opacity:0.5;">GLOBAL</span></div>
+        <div style="font-weight: 800; font-size: 1.2rem;">GEMINI FLASH <span style="font-size:10px; opacity:0.5;">GLOBAL</span></div>
     </div>
     <div class="status-card">
         <div id="rpm-display" class="rpm-val">0</div>
@@ -69,137 +69,136 @@
 </div>
 
 <script>
-    // --- 設定 ---
-    const GEMINI_API_KEY = "AIzaSyB7ds2kGm_ymMOKsNoTZDHAq6jnpn4UZOI";
-    const firebaseConfig = { 
-        databaseURL: "https://gemini-ai-api-seigen-default-rtdb.firebaseio.com/", 
-        projectId: "gemini-ai-api-seigen" 
-    };
-    const MODEL_NAME = "gemini-flash-latest";
+let GEMINI_API_KEY = "";
 
-    // --- 初期化 ---
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
-    const logsRef = db.ref('global_limit/logs');
-    const statusRef = db.ref('global_limit/status');
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
+const firebaseConfig = { 
+    databaseURL: "https://gemini-ai-api-seigen-default-rtdb.firebaseio.com/", 
+    projectId: "gemini-ai-api-seigen" 
+};
+const MODEL_NAME = "gemini-flash-latest";
 
-    const chatContainer = document.getElementById('chat-container');
-    const rpmDisplay = document.getElementById('rpm-display');
-    const sendBtn = document.getElementById('send-btn');
-    const lockNotice = document.getElementById('lock-notice');
-    const userInput = document.getElementById('user-input');
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const logsRef = db.ref('global_limit/logs');
+const statusRef = db.ref('global_limit/status');
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
 
-    let allLogEntries = [];
-    let isGlobalLocked = false;
-    
-    // IPアドレス保存用
-    let ipV4 = "none";
-    let ipV6 = "none";
+const chatContainer = document.getElementById('chat-container');
+const rpmDisplay = document.getElementById('rpm-display');
+const sendBtn = document.getElementById('send-btn');
+const lockNotice = document.getElementById('lock-notice');
+const userInput = document.getElementById('user-input');
 
-    // 起動時に「短いIP」と「長いIP」の両方を取得
-    window.onload = async () => {
-        // 並列で取得
-        Promise.all([
-            fetch('https://api4.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"})),
-            fetch('https://api6.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"}))
-        ]).then(results => {
-            ipV4 = results[0].ip;
-            ipV6 = results[1].ip;
-        });
+let allLogEntries = [];
+let isGlobalLocked = false;
 
-        const now = new Date();
-        const banner = document.createElement('div');
-        banner.className = 'msg-wrapper';
-        banner.style.alignSelf = 'center';
-        banner.innerHTML = `<div style="font-size:11px; color:var(--text-sub); background:rgba(255,255,255,0.05); padding:10px 20px; border-radius:15px; border:1px solid var(--border); text-align:center;">
-            【SYSTEM ON】 ${now.toLocaleDateString()} ${now.toLocaleTimeString()}<br>
-            Model: ${MODEL_NAME.toUpperCase()} | Secure Logging: Active</div>`;
-        chatContainer.appendChild(banner);
-    };
+let ipV4 = "none";
+let ipV6 = "none";
 
-    // Firebase連携・制限監視
-    logsRef.on('value', (snap) => {
-        const data = snap.val();
-        allLogEntries = data ? Object.values(data) : [];
-        updateUI();
-    });
+window.onload = async () => {
 
-    statusRef.on('value', (snap) => {
-        const data = snap.val();
-        isGlobalLocked = data ? data.isLocked : false;
-        updateUI();
-    });
-
-    function updateUI() {
-        const now = Date.now();
-        const count = allLogEntries.filter(e => e.role === 'user' && now - e.timestamp < 60000).length;
-        rpmDisplay.innerText = count;
-        const isLimited = count >= 15 || isGlobalLocked;
-        sendBtn.disabled = isLimited;
-        lockNotice.style.display = isLimited ? 'block' : 'none';
-        if (isGlobalLocked) lockNotice.innerText = "⚠️ 管理者により一時停止中";
-        else if (count >= 15) lockNotice.innerText = "⚠️ 全体制限に達しました (15/15)";
-    }
-
-    function addMsg(text, isUser, isLoading = false) {
-        const wrapper = document.createElement('div');
-        wrapper.className = `msg-wrapper ${isUser ? 'user-msg' : 'ai-msg'}`;
-        if (isLoading) {
-            wrapper.innerHTML = `<div class="bubble"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>`;
+    // ★ APIキー入力（毎回）
+    while (!GEMINI_API_KEY) {
+        const key = prompt("🔑 Gemini APIキーを入力してください");
+        if (!key) {
+            alert("APIキーが必要です");
         } else {
-            const tag = isUser ? '' : `<div class="model-tag">${MODEL_NAME.toUpperCase()}</div>`;
-            wrapper.innerHTML = `${tag}<div class="bubble">${text}</div>`;
-        }
-        chatContainer.appendChild(wrapper);
-        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
-        return wrapper;
-    }
-
-    // 送信処理
-    async function handleSend() {
-        const text = userInput.value.trim();
-        if (!text || sendBtn.disabled) return;
-
-        // 【管理画面用】IP情報を付与： メッセージ ip:1.1.1.1 ipv6:82dr...
-        const logText = `${text} ip:${ipV4} ipv6:${ipV6}`;
-        
-        // Firebaseにログを送信
-        logsRef.push({ timestamp: Date.now(), text: logText, role: 'user' });
-
-        // チャット画面には元のメッセージだけ表示
-        addMsg(text, true);
-        userInput.value = '';
-        userInput.style.height = 'auto';
-
-        const loading = addMsg("", false, true);
-
-        try {
-            // APIには元のメッセージだけ送信
-            const response = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: text }] }] })
-            });
-            const data = await response.json();
-            loading.remove();
-
-            if (data.error) throw new Error(data.error.message);
-            const aiText = data.candidates[0].content.parts[0].text;
-            
-            logsRef.push({ timestamp: Date.now(), text: aiText, role: 'ai' });
-            addMsg(aiText, false);
-
-        } catch (e) {
-            if (loading) loading.remove();
-            addMsg("⚠️ エラー: " + e.message, false);
+            GEMINI_API_KEY = key;
         }
     }
 
-    sendBtn.onclick = handleSend;
-    userInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
-    userInput.oninput = function() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; };
-    setInterval(updateUI, 1000);
+    Promise.all([
+        fetch('https://api4.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"})),
+        fetch('https://api6.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"}))
+    ]).then(results => {
+        ipV4 = results[0].ip;
+        ipV6 = results[1].ip;
+    });
+
+    const now = new Date();
+    const banner = document.createElement('div');
+    banner.className = 'msg-wrapper';
+    banner.style.alignSelf = 'center';
+    banner.innerHTML = `<div style="font-size:11px; color:var(--text-sub); background:rgba(255,255,255,0.05); padding:10px 20px; border-radius:15px; border:1px solid var(--border); text-align:center;">
+        【SYSTEM ON】 ${now.toLocaleDateString()} ${now.toLocaleTimeString()}<br>
+        Model: ${MODEL_NAME.toUpperCase()} | Secure Logging: Active</div>`;
+    chatContainer.appendChild(banner);
+};
+
+logsRef.on('value', (snap) => {
+    const data = snap.val();
+    allLogEntries = data ? Object.values(data) : [];
+    updateUI();
+});
+
+statusRef.on('value', (snap) => {
+    const data = snap.val();
+    isGlobalLocked = data ? data.isLocked : false;
+    updateUI();
+});
+
+function updateUI() {
+    const now = Date.now();
+    const count = allLogEntries.filter(e => e.role === 'user' && now - e.timestamp < 60000).length;
+    rpmDisplay.innerText = count;
+    const isLimited = count >= 15 || isGlobalLocked || !GEMINI_API_KEY;
+    sendBtn.disabled = isLimited;
+    lockNotice.style.display = isLimited ? 'block' : 'none';
+}
+
+function addMsg(text, isUser, isLoading = false) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `msg-wrapper ${isUser ? 'user-msg' : 'ai-msg'}`;
+    if (isLoading) {
+        wrapper.innerHTML = `<div class="bubble"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>`;
+    } else {
+        const tag = isUser ? '' : `<div class="model-tag">${MODEL_NAME.toUpperCase()}</div>`;
+        wrapper.innerHTML = `${tag}<div class="bubble">${text}</div>`;
+    }
+    chatContainer.appendChild(wrapper);
+    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+    return wrapper;
+}
+
+async function handleSend() {
+    const text = userInput.value.trim();
+    if (!text || sendBtn.disabled) return;
+
+    const logText = `${text} ip:${ipV4} ipv6:${ipV6}`;
+    logsRef.push({ timestamp: Date.now(), text: logText, role: 'user' });
+
+    addMsg(text, true);
+    userInput.value = '';
+    userInput.style.height = 'auto';
+
+    const loading = addMsg("", false, true);
+
+    try {
+        const response = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: [{ text: text }] }] })
+        });
+        const data = await response.json();
+        loading.remove();
+
+        if (data.error) throw new Error(data.error.message);
+        const aiText = data.candidates[0].content.parts[0].text;
+
+        logsRef.push({ timestamp: Date.now(), text: aiText, role: 'ai' });
+        addMsg(aiText, false);
+
+    } catch (e) {
+        if (loading) loading.remove();
+        addMsg("⚠️ エラー: " + e.message, false);
+    }
+}
+
+sendBtn.onclick = handleSend;
+userInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+userInput.oninput = function() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; };
+setInterval(updateUI, 1000);
 </script>
+
 </body>
 </html>
