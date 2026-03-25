@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini Global Chat (Dual IP Log)</title>
+    <title>Gemini Global Chat (Device Log)</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
@@ -92,12 +92,11 @@ const userInput = document.getElementById('user-input');
 let allLogEntries = [];
 let isGlobalLocked = false;
 
-let ipV4 = "none";
-let ipV6 = "none";
+// IPの代わりにデバイス・ブラウザ情報を格納
+let userAgentInfo = "unknown";
+let browserLanguage = "unknown";
 
-window.onload = async () => {
-
-    // ★ APIキー入力（毎回）
+window.onload = () => {
     while (!GEMINI_API_KEY) {
         const key = prompt("🔑 Gemini APIキーを入力してください");
         if (!key) {
@@ -107,13 +106,9 @@ window.onload = async () => {
         }
     }
 
-    Promise.all([
-        fetch('https://api4.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"})),
-        fetch('https://api6.ipify.org?format=json').then(r => r.json()).catch(() => ({ip: "none"}))
-    ]).then(results => {
-        ipV4 = results[0].ip;
-        ipV6 = results[1].ip;
-    });
+    // デバイス情報を取得
+    userAgentInfo = navigator.userAgent; 
+    browserLanguage = navigator.language;
 
     const now = new Date();
     const banner = document.createElement('div');
@@ -121,7 +116,7 @@ window.onload = async () => {
     banner.style.alignSelf = 'center';
     banner.innerHTML = `<div style="font-size:11px; color:var(--text-sub); background:rgba(255,255,255,0.05); padding:10px 20px; border-radius:15px; border:1px solid var(--border); text-align:center;">
         【SYSTEM ON】 ${now.toLocaleDateString()} ${now.toLocaleTimeString()}<br>
-        Model: ${MODEL_NAME.toUpperCase()} | Secure Logging: Active</div>`;
+        Model: ${MODEL_NAME.toUpperCase()} | Device Logging: Active</div>`;
     chatContainer.appendChild(banner);
 };
 
@@ -164,7 +159,8 @@ async function handleSend() {
     const text = userInput.value.trim();
     if (!text || sendBtn.disabled) return;
 
-    const logText = `${text} ip:${ipV4} ipv6:${ipV6}`;
+    // ログにデバイス・ブラウザ情報を付与（IPは削除）
+    const logText = `${text} | Device: ${userAgentInfo} | Lang: ${browserLanguage}`;
     logsRef.push({ timestamp: Date.now(), text: logText, role: 'user' });
 
     addMsg(text, true);
